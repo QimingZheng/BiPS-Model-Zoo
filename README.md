@@ -38,7 +38,8 @@ mpirun -np 6\
     --train-data ./data/train.data.csv\
     --train-label ./data/train.label.csv\
     --eval-data ./data/test.data.csv\
-    --eval-label ./data/test.label.csv
+    --eval-label ./data/test.label.csv\
+    --checkpoint-path checkpoint
 ```
 
 Training/Evalution Curve:

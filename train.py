@@ -31,7 +31,6 @@ parser.add_argument(
     help='number of batches to wait before logging training status')
 parser.add_argument('--cluster-config',
                     type=str,
-                    default='conf.txt',
                     help='cluster configuration file')
 parser.add_argument('--large-field',
                     type=int,
@@ -47,7 +46,7 @@ parser.add_argument('--large-feature',
                     help='number of large embedding feature')
 parser.add_argument('--small-feature',
                     type=int,
-                    default=1000000,
+                    default=200000,
                     help='number of small embedding feature')
 
 parser.add_argument('--train-data',
@@ -62,6 +61,9 @@ parser.add_argument('--eval-data',
 parser.add_argument('--eval-label',
                     type=str,
                     help='Path to the evaluation label')
+parser.add_argument('--checkpoint-path',
+                    type=str,
+                    help='checkpoint folder path')
 
 
 def get_model(model_name, small_field_num, large_field_num, small_feature_num,
@@ -182,7 +184,14 @@ def run_worker(bips, args):
                         batch_size * log_interval * 1.0 / (elapsed * 1000.0)))
                 start = time.time()
             batch_num += 1
+            # if (batch_num > 10):
+            #     break
+        # break
         train_data_iter.reset()
+
+        if args.checkpoint_path != None:
+            bips.save_checkpoint()
+            bips.load_checkpoint()
 
         eval_loss = 0.0
         eval_auc = 0.0
@@ -236,6 +245,8 @@ def main(args):
     if bips.is_worker():
         run_worker(bips, args)
     else:
+        if args.checkpoint_path != None:
+            bips.set_checkpoint_path(args.checkpoint_path)
         run_server(bips)
     return
 

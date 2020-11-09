@@ -46,7 +46,7 @@ parser.add_argument('--large-feature',
                     help='number of large embedding feature')
 parser.add_argument('--small-feature',
                     type=int,
-                    default=200000,
+                    default=1000000,
                     help='number of small embedding feature')
 
 parser.add_argument('--train-data',
@@ -91,16 +91,26 @@ def run_worker(bips, args):
     log_interval = args.log_interval
     dim = 80  # each feature dim = 80
     embedding_shape = [large_feature_num, dim]
-    bips.init_meta(embedding_shape)
-    bips.init_embedding(embedding_shape)
+    bips.init_meta(0, embedding_shape)
+    bips.init_embedding(0, embedding_shape)
+
+    # small_dim = 1
+    # small_embedding_shape = [large_feature_num, small_dim]
+    # bips.init_meta(1, small_embedding_shape)
+    # bips.init_embedding(1, small_embedding_shape)
 
     # Read Dataset
     CRITEO_FIELD_NUM = large_field_num + small_field_num
+    """
     train_data = mx.io.CSVIter(data_csv=args.train_data + "." + str(dev), data_shape=(CRITEO_FIELD_NUM,),
                                label_csv=args.train_label + "." + str(dev), label_shape=(1,),
                                batch_size=batch_size, round_batch=False,
                                prefetching_buffer=4)
-
+    """
+    train_data = mx.io.CSVIter(data_csv=args.train_data, data_shape=(CRITEO_FIELD_NUM,),
+                               label_csv=args.train_label, label_shape=(1,),
+                               batch_size=batch_size, round_batch=False,
+                               prefetching_buffer=4)
     eval_data = mx.io.CSVIter(data_csv=args.eval_data, data_shape=(CRITEO_FIELD_NUM,),
                               label_csv=args.eval_label, label_shape=(1,),
                               batch_size=batch_size, round_batch=False,
@@ -110,8 +120,8 @@ def run_worker(bips, args):
                       small_feature_num, dev)
     ctx = [mx.gpu(dev)]
     # model.initialize(mx.init.Uniform(), ctx=ctx)
-    model.initialize(mx.init.Constant(0.0001), ctx=ctx)
-    # model.initialize(mx.init.Xavier(), ctx=ctx)
+    # model.initialize(mx.init.Constant(0.0001), ctx=ctx)
+    model.initialize(mx.init.Xavier(), ctx=ctx)
     # model.initialize(mx.init.Normal(sigma=0.05), ctx=ctx)
     model.hybridize()
 
@@ -121,11 +131,13 @@ def run_worker(bips, args):
         model.collect_params(),
         optimizer='adam',
         optimizer_params={
-            'learning_rate': 0.001,
+            'learning_rate': 0.0001,
         })
 
     embedding_weight = mx.nd.zeros((batch_size, large_field_num * dim),
                                    ctx=mx.gpu(dev))
+    # small_embedding_weight = mx.nd.zeros((batch_size, large_field_num * small_dim),
+    #                                ctx=mx.gpu(dev))
     embedding_weight.attach_grad()
     start = time.time()
     train_data_iter = iter(train_data)
@@ -154,7 +166,8 @@ def run_worker(bips, args):
             embedding_id = embedding_id.copyto(mx.gpu(dev))
             mx.nd.waitall()
 
-            bips.pull_embedding_weights(embedding_weight, embedding_id)
+            bips.pull_embedding_weights(0, embedding_weight, embedding_id)
+            # bips.pull_embedding_weights(1, small_embedding_weight, embedding_id)
 
             # do some graph computation
             with mx.autograd.record():
@@ -173,7 +186,8 @@ def run_worker(bips, args):
 
             trainer.update(batch_size, ignore_stale_grad=True)
 
-            bips.push_embedding_grads(embedding_grad, embedding_id)
+            bips.push_embedding_grads(0, embedding_grad, embedding_id)
+            # bips.push_embedding_grads(1, small_embedding_weight, embedding_id)
 
             if batch_num % log_interval == 0 and batch_num > 0:
                 elapsed = time.time() - start
@@ -183,15 +197,14 @@ def run_worker(bips, args):
                         _loss.asnumpy()), auc(mx.nd.sigmoid(output), label),
                         batch_size * log_interval * 1.0 / (elapsed * 1000.0)))
                 start = time.time()
+
             batch_num += 1
-            # if (batch_num > 10):
-            #     break
-        # break
+
         train_data_iter.reset()
 
         if args.checkpoint_path != None:
-            bips.save_checkpoint()
-            bips.load_checkpoint()
+            bips.save_weight(0, large_feature_num, dim)
+            bips.load_weight(0, large_feature_num, dim)
 
         eval_loss = 0.0
         eval_auc = 0.0
@@ -219,7 +232,8 @@ def run_worker(bips, args):
             embedding_id = embedding_id.copyto(mx.gpu(dev))
             mx.nd.waitall()
 
-            bips.pull_embedding_weights(embedding_weight, embedding_id)
+            bips.pull_embedding_weights(0, embedding_weight, embedding_id)
+            # bips.pull_embedding_weights(1, small_embedding_weight, embedding_id)
 
             # do some graph computation
             with mx.autograd.record():
@@ -243,10 +257,10 @@ def main(args):
     bips = MXRecsys(args.cluster_config)
     bips.build_replica()  # must build replica first
     if bips.is_worker():
+        if args.checkpoint_path != None:
+            bips.set_checkpoint_path(0, args.checkpoint_path)
         run_worker(bips, args)
     else:
-        if args.checkpoint_path != None:
-            bips.set_checkpoint_path(args.checkpoint_path)
         run_server(bips)
     return
 

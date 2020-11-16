@@ -48,6 +48,10 @@ parser.add_argument('--small-feature',
                     type=int,
                     default=1000000,
                     help='number of small embedding feature')
+parser.add_argument('--model',
+                    type=str,
+                    default="deepfm",
+                    help='Model name [widedeep, deepfm]')
 
 parser.add_argument('--train-data',
                     type=str,
@@ -70,6 +74,9 @@ def get_model(model_name, small_field_num, large_field_num, small_feature_num,
               dev):
     if model_name == "deepfm":
         return DeepFM(small_field_num, large_field_num, small_feature_num, 80,
+                      [512, 256, 128])
+    if model_name == "widedeep":
+        return WideDeep(small_field_num, large_field_num, small_feature_num, 80,
                       [512, 256, 128])
     else:
         raise NotImplementedError
@@ -94,10 +101,11 @@ def run_worker(bips, args):
     bips.init_meta(0, embedding_shape)
     bips.init_embedding(0, embedding_shape)
 
-    # small_dim = 1
-    # small_embedding_shape = [large_feature_num, small_dim]
-    # bips.init_meta(1, small_embedding_shape)
-    # bips.init_embedding(1, small_embedding_shape)
+    if args.model == "widedeep":
+        small_dim = 1
+        small_embedding_shape = [large_feature_num, small_dim]
+        bips.init_meta(1, small_embedding_shape)
+        bips.init_embedding(1, small_embedding_shape)
 
     # Read Dataset
     CRITEO_FIELD_NUM = large_field_num + small_field_num
@@ -116,7 +124,7 @@ def run_worker(bips, args):
                               batch_size=batch_size, round_batch=False,
                               prefetching_buffer=4)
     # Build Model
-    model = get_model("deepfm", small_field_num, large_field_num,
+    model = get_model(args.model, small_field_num, large_field_num,
                       small_feature_num, dev)
     ctx = [mx.gpu(dev)]
     # model.initialize(mx.init.Uniform(), ctx=ctx)
@@ -136,8 +144,9 @@ def run_worker(bips, args):
 
     embedding_weight = mx.nd.zeros((batch_size, large_field_num * dim),
                                    ctx=mx.gpu(dev))
-    # small_embedding_weight = mx.nd.zeros((batch_size, large_field_num * small_dim),
-    #                                ctx=mx.gpu(dev))
+    if args.model == "widedeep":
+        small_embedding_weight = mx.nd.zeros((batch_size, large_field_num * small_dim),
+                                       ctx=mx.gpu(dev))
     embedding_weight.attach_grad()
     start = time.time()
     train_data_iter = iter(train_data)
@@ -167,12 +176,16 @@ def run_worker(bips, args):
             mx.nd.waitall()
 
             bips.pull_embedding_weights(0, embedding_weight, embedding_id)
-            # bips.pull_embedding_weights(1, small_embedding_weight, embedding_id)
+            if args.model == "widedeep":
+                bips.pull_embedding_weights(1, small_embedding_weight, embedding_id)
 
             # do some graph computation
             with mx.autograd.record():
-                output = model(small_embedding_id, embedding_id,
-                               embedding_weight)
+                if args.model == "widedeep":
+                    output = model(small_embedding_id, embedding_weight, small_embedding_weight)
+                else:
+                    output = model(small_embedding_id, embedding_id,
+                                   embedding_weight)
                 _loss = loss(output, label)
 
             _loss.backward()
@@ -187,7 +200,8 @@ def run_worker(bips, args):
             trainer.update(batch_size, ignore_stale_grad=True)
 
             bips.push_embedding_grads(0, embedding_grad, embedding_id)
-            # bips.push_embedding_grads(1, small_embedding_weight, embedding_id)
+            if args.model == "widedeep":
+                bips.push_embedding_grads(1, small_embedding_weight, embedding_id)
 
             if batch_num % log_interval == 0 and batch_num > 0:
                 elapsed = time.time() - start
@@ -205,6 +219,9 @@ def run_worker(bips, args):
         if args.checkpoint_path != None:
             bips.save_weight(0, large_feature_num, dim)
             bips.load_weight(0, large_feature_num, dim)
+            if args.model == "widedeep":
+                    bips.save_weight(1, large_feature_num, small_dim)
+                    bips.load_weight(1, large_feature_num, small_dim)
 
         eval_loss = 0.0
         eval_auc = 0.0
@@ -233,12 +250,16 @@ def run_worker(bips, args):
             mx.nd.waitall()
 
             bips.pull_embedding_weights(0, embedding_weight, embedding_id)
-            # bips.pull_embedding_weights(1, small_embedding_weight, embedding_id)
+            if args.model == "widedeep":
+                bips.pull_embedding_weights(1, small_embedding_weight, embedding_id)
 
             # do some graph computation
             with mx.autograd.record():
-                output = model(small_embedding_id, embedding_id,
-                               embedding_weight)
+                if args.model == "widedeep":
+                    output = model(small_embedding_id, embedding_weight, small_embedding_weight)
+                else:
+                    output = model(small_embedding_id, embedding_id,
+                                   embedding_weight)
                 _loss = loss(output, label)
 
             mx.nd.waitall()
@@ -258,7 +279,9 @@ def main(args):
     bips.build_replica()  # must build replica first
     if bips.is_worker():
         if args.checkpoint_path != None:
-            bips.set_checkpoint_path(0, args.checkpoint_path)
+            bips.set_checkpoint_path(0, args.checkpoint_path + ".0")
+            if args.model == "widedeep":
+                bips.set_checkpoint_path(1, args.checkpoint_path + ".1")
         run_worker(bips, args)
     else:
         run_server(bips)

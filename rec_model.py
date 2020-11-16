@@ -67,3 +67,37 @@ class DeepFM(nn.Block):
         # x = nd.concat(self.mlp(inputs), x, dim=1)
         # x = mx.nd.sigmoid(x)
         return x
+
+class WideDeep(nn.Block):
+    def __init__(self, small_field_num, large_field_num, small_feature_num,
+                 embedding_dim, mlp_dims):
+        super(WideDeep, self).__init__()
+        self.field_num = small_field_num + large_field_num
+        self.small_field_num = small_field_num
+        self.large_field_num = large_field_num
+        self.embedding_dim = embedding_dim
+        self.embedding = nn.Embedding(small_feature_num,
+                                      embedding_dim,
+                                      sparse_grad=False)
+        self.fc = nn.Embedding(small_feature_num, 1, sparse_grad=False)
+        self.linear_layer = nn.Dense(1, use_bias=True)
+        input_dim = self.embed_output_dim = self.field_num * embedding_dim
+        self.mlp = nn.Sequential()
+        for dim in mlp_dims:
+            self.mlp.add(nn.Dense(dim, 'relu', True, in_units=input_dim))
+            self.mlp.add(nn.Dropout(rate=0.1))
+            input_dim = dim
+        self.mlp.add(nn.Dense(in_units=input_dim, units=1))
+
+    def forward(self, small_embed_ids, dense_input, wide_input):
+        embed_x = self.embedding(small_embed_ids)
+        embedding_input = nd.reshape(dense_input,
+                                     shape=(-1, self.large_field_num,
+                                            self.embedding_dim))
+        embed_x = nd.concat(embed_x, embedding_input, dim=1)
+        inputs = nd.reshape(embed_x, (-1, self.embed_output_dim))
+        x = self.linear_layer(
+            self.fc(small_embed_ids).sum(1) + wide_input.sum(1)) + self.mlp(inputs)
+        # x = nd.concat(self.mlp(inputs), x, dim=1)
+        # x = mx.nd.sigmoid(x)
+        return x

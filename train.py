@@ -99,13 +99,15 @@ def run_worker(bips, args):
     dim = 80  # each feature dim = 80
     embedding_shape = [large_feature_num, dim]
     bips.init_meta(0, embedding_shape)
-    bips.init_embedding(0, embedding_shape)
+    adam_opt_conf =dict({"beta_1": 0.9, "beta_2": 0.999, "lr" : 0.001, "wd" : 0.0})
+    bips.init_embedding(0, embedding_shape, adam_opt_conf)
 
     if args.model == "widedeep":
         small_dim = 1
         small_embedding_shape = [large_feature_num, small_dim]
         bips.init_meta(1, small_embedding_shape)
-        bips.init_embedding(1, small_embedding_shape)
+        ftrl_opt_conf =dict({"lambda": 0.9, "beta": 0.999, "lr" : 0.001, "wd" : 0.0})
+        bips.init_embedding(1, small_embedding_shape, ftrl_opt_conf)
 
     # Read Dataset
     CRITEO_FIELD_NUM = large_field_num + small_field_num

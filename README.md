@@ -44,6 +44,6 @@ mpirun -np 6\
 
 Training/Evalution Curve:
 
-![image](./img/img.PNG)
+![image](./img.PNG)
 
 
